@@ -7,39 +7,31 @@ jobs:
   build:
     runs-on: windows-latest
     steps:
-      - name: Checkout Repository
+      - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: Install Build Tooling & Dependencies
-        shell: pwsh
+      - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install --upgrade pip
           python -m pip install pyinstaller numpy pandas scipy statsmodels PyQt6 pyqtgraph
 
-      - name: Compile Executable via PyInstaller
+      - name: Build Standalone Windows Executable
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path dist
-          python -m PyInstaller --name VibePadSchism --onedir --windowed --noconfirm --clean --collect-submodules scipy --hidden-import scipy.special.cython_special --hidden-import statsmodels.stats.anova src/main.py
+          python -m PyInstaller --name VibePadSchism --onedir --windowed --noconfirm --clean --hidden-import scipy.special.cython_special --hidden-import statsmodels.stats.anova src/main.py
 
-      - name: Copy UI Assets to Distribution Directory
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path dist/VibePadSchism/src/ui
-          if (Test-Path src/ui/logo.png) { Copy-Item src/ui/logo.png dist/VibePadSchism/src/ui/logo.png }
-
-      - name: Package Standalone Portable Zip
+      - name: Create Portable Zip
         shell: pwsh
         run: |
           Compress-Archive -Path dist/VibePadSchism -DestinationPath dist/VibePadSchism-Windows-Portable.zip -Force
 
-      - name: Upload Artifact to GitHub
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: VibePadSchism-Windows-Portable
