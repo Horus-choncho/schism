@@ -1,0 +1,18 @@
+[project]
+name = "openprism-qt"
+version = "0.1.0"
+description = "A secure, Linux-native open-source alternative to GraphPad Prism 10 using Python and Qt6."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "GPL-3.0-or-later"}
+dependencies = [
+    "PyQt6>=6.4.0",
+    "pyqtgraph>=0.13.0",
+    "numpy>=1.24.0",
+    "pandas>=2.0.0",
+    "scipy>=1.10.0",
+    "matplotlib>=3.7.0"
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -1,0 +1,35 @@
+# Python & Bytecode
+__pycache__/
+*.py[cod]
+*.class
+*.so
+.Python
+env/
+venv/
+.venv/
+
+# Tests Directory
+tests/
+
+# Application Caches & User Data
+.config/
+recent_files.txt
+
+# Distribution & Build Artifacts
+build/
+dist/
+*.deb
+*.exe
+*.zip
+*.spec
+
+# Testing / Tooling Caches
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Antigravity IDE and Binaries
+*antigravity*
+*Antigravity*
+Antigravity-x64/
+.antigravity/

@@ -1,0 +1,75 @@
+name: VibePad Schism CI/CD Release Packaging
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build-linux-deb:
+    name: Build Linux .deb Package
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install PyQt6 pyqtgraph numpy pandas scipy statsmodels pyinstaller
+
+      - name: Run Test Suite
+        run: |
+          QT_QPA_PLATFORM=offscreen python -m unittest discover -s tests
+          python tests/test_security.py
+
+      - name: Build Debian Package
+        run: |
+          chmod +x scripts/build_deb.sh
+          ./scripts/build_deb.sh
+
+      - name: Upload Debian Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vibepad-schism-linux-deb
+          path: dist/*.deb
+
+  build-windows-portable:
+    name: Build Windows Portable .zip Package
+    runs-on: windows-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install PyQt6 pyqtgraph numpy pandas scipy statsmodels pyinstaller
+
+      - name: Run Test Suite
+        run: |
+          python -m unittest discover -s tests
+          python tests/test_security.py
+
+      - name: Build Windows Portable Package
+        shell: powershell
+        run: |
+          .\scripts\build_windows.ps1
+
+      - name: Upload Windows Portable Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vibepad-schism-windows-portable
+          path: dist/*.zip
