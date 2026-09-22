@@ -33,3 +33,13 @@ htmlcov/
 *Antigravity*
 Antigravity-x64/
 .antigravity/
+
+# Local blueprints and orchestration core
+complete_codebase.md
+orchestration_core.toml
+
+# Local blueprints and design configuration
+config/
+
+# Build and packaging automation scripts
+scripts/
