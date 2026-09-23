@@ -221,6 +221,13 @@ class VibePadSchismMainWindow(QMainWindow):
 
         file_menu.addSeparator()
 
+        new_workspace_action = QAction("📄  Create New Workspace (.schism)", self)
+        new_workspace_action.setShortcut(QKeySequence("Ctrl+N"))
+        new_workspace_action.triggered.connect(lambda: self.mediator.create_new_workspace(self))
+        file_menu.addAction(new_workspace_action)
+
+        file_menu.addSeparator()
+
         quick_save_action = QAction("Save (Quick Save)", self)
         quick_save_action.setShortcut(QKeySequence.StandardKey.Save)
         quick_save_action.triggered.connect(self.trigger_quick_save)
@@ -295,12 +302,16 @@ class VibePadSchismMainWindow(QMainWindow):
         # Assemble inner splitter (Center Stacked Pane | Right Plot Canvas)
         self.inner_splitter.addWidget(self.center_stack)
         self.inner_splitter.addWidget(self.plot_canvas)
-        self.inner_splitter.setSizes([520, 480])
+        self.inner_splitter.setSizes([300, 700])
+        self.inner_splitter.setCollapsible(0, True)
+        self.inner_splitter.setCollapsible(1, True)
 
         # Assemble outer splitter (Left Tree Sidebar | Inner Splitter)
         self.outer_splitter.addWidget(self.nav_tree)
         self.outer_splitter.addWidget(self.inner_splitter)
-        self.outer_splitter.setSizes([240, 1000])
+        self.outer_splitter.setSizes([200, 1000])
+        self.outer_splitter.setCollapsible(0, True)
+        self.outer_splitter.setCollapsible(1, True)
 
         main_vertical_layout.addWidget(self.outer_splitter)
 

@@ -17,6 +17,8 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
 import math
+import os
+import tempfile
 import pyqtgraph as pg
 import numpy as np
 from PyQt6.QtWidgets import (
@@ -24,7 +26,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QSpinBox, QColorDialog, QDialogButtonBox, QMessageBox,
     QFileDialog, QInputDialog, QGraphicsItem, QHBoxLayout, QCheckBox, QLabel
 )
-from PyQt6.QtGui import QPainter, QPdfWriter, QPageSize, QAction, QColor
+from PyQt6.QtGui import QPainter, QPdfWriter, QPageSize, QAction, QColor, QImage
 from PyQt6.QtCore import Qt, QRect, QRectF
 
 
@@ -1053,48 +1055,55 @@ class ScientificPlotCanvas(QWidget):
         exporter.export(filepath)
 
     def _export_as_pdf(self, filepath: str) -> None:
-        """Renders the active plot view into a vector-graphics A4 PDF document preserving aspect ratio."""
-        writer = QPdfWriter(filepath)
-        writer.setPageSize(QPageSize(QPageSize.PageSizeId.A4))
-        writer.setResolution(300)
+        """Exports the active plot view as a high-resolution rasterized PDF document."""
+        from pyqtgraph.exporters import ImageExporter
 
-        painter = QPainter(writer)
-
-        page_w = float(writer.width())
-        page_h = float(writer.height())
-        margin = 150.0  # 300 DPI margin (~0.5 inch / 12.7 mm)
-
-        avail_w = max(1.0, page_w - (2.0 * margin))
-        avail_h = max(1.0, page_h - (2.0 * margin))
-
-        widget_w = float(max(1, self.plot_widget.width()))
-        widget_h = float(max(1, self.plot_widget.height()))
-        aspect = widget_w / widget_h
-
-        # Uniform aspect ratio fitting
-        if (avail_w / avail_h) > aspect:
-            target_h = avail_h
-            target_w = target_h * aspect
-        else:
-            target_w = avail_w
-            target_h = target_w / max(0.001, aspect)
-
-        offset_x = margin + (avail_w - target_w) / 2.0
-        offset_y = margin + (avail_h - target_h) / 2.0
-
-        target_rect = QRectF(offset_x, offset_y, target_w, target_h)
-        source_rect = QRect(0, 0, int(widget_w), int(widget_h))
-
-        plot_item = self.plot_widget.getPlotItem()
-        view_box = self.plot_widget.getViewBox()
-        orig_range = view_box.viewRange() if hasattr(view_box, "viewRange") else None
-
-        plot_item.setClipToView(True)
+        tmp_file = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+        tmp_png_path = tmp_file.name
+        tmp_file.close()
 
         try:
-            self.plot_widget.render(painter, target_rect, source_rect)
+            # 1. Export plot item to temporary PNG at 1920px width
+            exporter = ImageExporter(self.plot_widget.plotItem)
+            exporter.parameters()['width'] = 1920
+            exporter.export(tmp_png_path)
+
+            # 2. Load temporary PNG into QImage
+            image = QImage(tmp_png_path)
+
+            # 3. Instantiate QPdfWriter with A4 page size and 300 DPI resolution
+            writer = QPdfWriter(filepath)
+            writer.setPageSize(QPageSize(QPageSize.PageSizeId.A4))
+            writer.setResolution(300)
+
+            # 4. Open QPainter and render aspect-ratio preserved image onto PDF page
+            painter = QPainter(writer)
+            try:
+                margin = 150  # 150-dot margin
+                page_w = writer.width()
+                page_h = writer.height()
+                avail_w = page_w - (2 * margin)
+                avail_h = page_h - (2 * margin)
+
+                aspect = image.width() / max(1, image.height())
+
+                if avail_w / max(1, avail_h) > aspect:
+                    target_h = avail_h
+                    target_w = target_h * aspect
+                else:
+                    target_w = avail_w
+                    target_h = target_w / aspect
+
+                target_x = margin + (avail_w - target_w) / 2.0
+                target_y = margin + (avail_h - target_h) / 2.0
+                target_rect = QRectF(target_x, target_y, target_w, target_h)
+
+                painter.drawImage(target_rect, image)
+            finally:
+                painter.end()
+
         finally:
-            plot_item.setClipToView(False)
-            if orig_range and hasattr(view_box, "setRange"):
-                view_box.setRange(xRange=orig_range[0], yRange=orig_range[1], padding=0)
-            painter.end()
+            if os.path.exists(tmp_png_path):
+                os.remove(tmp_png_path)
+
+

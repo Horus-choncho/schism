@@ -16,8 +16,11 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
+import random
 import numpy as np
 import pandas as pd
+
+ANIMAL_EMOJIS = ["🦄", "🧌", "👽", "👾", "👻", "🧚", "🧞‍♂️", "🦊", "🐙", "🦉"]
 
 
 class ScientificTableModel:
@@ -31,10 +34,11 @@ class ScientificTableModel:
         table_type (str): Format specification for the dataset ('XY', 'Columnar', 'Grouped').
         sheet_name (str): Identifier name for the sheet workspace.
         name (str): Display name for tree navigation linking.
+        icon_emoji (str): Animal/creature emoji representing the table dataset.
         _data_frame (pd.DataFrame): Internal tabular storage matrix.
     """
 
-    def __init__(self, table_type: str = "XY", sheet_name: str = "Data Table 1") -> None:
+    def __init__(self, table_type: str = "XY", sheet_name: str = "Data Table 1", icon_emoji: str = None) -> None:
         """Initializes an isolated storage grid for structured scientific data.
 
         Args:
@@ -42,12 +46,77 @@ class ScientificTableModel:
                 Defaults to "XY".
             sheet_name (str, optional): Label for the data sheet instance.
                 Defaults to "Data Table 1".
+            icon_emoji (str, optional): Custom emoji icon or None to pick randomly.
         """
         self.table_type = table_type
         self.sheet_name = sheet_name
         self.name = sheet_name
+        self.icon_emoji = icon_emoji if icon_emoji else random.choice(ANIMAL_EMOJIS)
         self._data_frame = pd.DataFrame()
+        self.analysis_history = []
         self.clear_table()
+
+    def add_analysis_result(self, analysis_name: str, html_block: str) -> dict:
+        """Appends a timestamped scientific analysis result HTML block to the ledger history vector.
+
+        Args:
+            analysis_name (str): Name of the performed analysis / hypothesis test.
+            html_block (str): Formatted HTML table or block representing test results.
+
+        Returns:
+            dict: The newly appended history entry record.
+        """
+        import re
+        from datetime import datetime
+        timestamp_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        # Generate a sanitized HTML anchor ID from the analysis name
+        anchor_id = re.sub(r"[^a-z0-9_]", "_", analysis_name.lower().strip())
+        anchor_id = re.sub(r"_+", "_", anchor_id).strip("_")
+        # Make anchor unique by appending the entry index
+        anchor_id = f"{anchor_id}_{len(self.analysis_history)}"
+        entry = {
+            "analysis_name": analysis_name,
+            "name": analysis_name,
+            "anchor_id": anchor_id,
+            "html_block": html_block,
+            "html": html_block,
+            "timestamp": timestamp_str
+        }
+        self.analysis_history.append(entry)
+        return entry
+
+    def to_dict(self) -> dict:
+        """Serializes table model state including data frame, icon_emoji, and analysis history into a dictionary."""
+        df_dict = {}
+        if hasattr(self, "_data_frame") and self._data_frame is not None:
+            df_dict = self._data_frame.to_dict(orient="split")
+        return {
+            "table_type": self.table_type,
+            "sheet_name": self.sheet_name,
+            "name": self.name,
+            "icon_emoji": getattr(self, "icon_emoji", random.choice(ANIMAL_EMOJIS)),
+            "data_frame": df_dict,
+            "analysis_history": list(getattr(self, "analysis_history", []))
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "ScientificTableModel":
+        """Restores a ScientificTableModel instance from a serialized dictionary representation."""
+        icon_emoji = data.get("icon_emoji")
+        model = cls(
+            table_type=data.get("table_type", "XY"),
+            sheet_name=data.get("sheet_name", "Data Table 1"),
+            icon_emoji=icon_emoji
+        )
+        model.name = data.get("name", model.sheet_name)
+        df_data = data.get("data_frame")
+        if isinstance(df_data, dict) and df_data:
+            try:
+                model._data_frame = pd.DataFrame.from_dict(df_data, orient="split")
+            except Exception:
+                model.clear_table()
+        model.analysis_history = data.get("analysis_history", [])
+        return model
 
     def clear_table(self) -> None:
         """Resets the data frame to its base structural format safely."""

@@ -182,7 +182,9 @@ class ScientificFileHandler:
                         "index": idx,
                         "sheet_name": sheet_name,
                         "table_type": getattr(model, "table_type", "XY"),
-                        "csv_filename": csv_filename
+                        "csv_filename": csv_filename,
+                        "analysis_history": getattr(model, "analysis_history", []),
+                        "icon_emoji": getattr(model, "icon_emoji", None)
                     })
 
                     # Write sheet DataFrame into in-memory CSV buffer to avoid transient disk files
@@ -227,8 +229,10 @@ class ScientificFileHandler:
                     sheet_name = sheet.get("sheet_name", "Data Sheet")
                     table_type = sheet.get("table_type", "XY")
                     csv_filename = sheet.get("csv_filename", "")
+                    icon_emoji = sheet.get("icon_emoji")
 
-                    model = ScientificTableModel(table_type=table_type, sheet_name=sheet_name)
+                    model = ScientificTableModel(table_type=table_type, sheet_name=sheet_name, icon_emoji=icon_emoji)
+                    model.analysis_history = sheet.get("analysis_history", [])
                     if csv_filename in zf.namelist():
                         csv_content = zf.read(csv_filename).decode("utf-8")
                         df = pd.read_csv(io.StringIO(csv_content), keep_default_na=True)

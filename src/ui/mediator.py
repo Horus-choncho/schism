@@ -91,6 +91,10 @@ class WorkspaceMediator:
             self.tree.sheet_selected.connect(self.display_sheet_model)
             if hasattr(self.tree, "navigation_selected"):
                 self.tree.navigation_selected.connect(self.handle_navigation_selected)
+            if hasattr(self.tree, "add_table_requested"):
+                self.tree.add_table_requested.connect(self._handle_add_new_table)
+            if hasattr(self.tree, "delete_item_requested"):
+                self.tree.delete_item_requested.connect(self._handle_delete_item)
 
     def handle_column_header_renamed(self, col_idx: int, old_name: str, new_name: str) -> None:
         """Re-syncs visualization canvas and HTML results browser when a column header label is modified.
@@ -115,7 +119,8 @@ class WorkspaceMediator:
 
         Args:
             target_model (ScientificTableModel): Target sheet data model.
-            node_type (str, optional): Selected node type ('table', 'results', 'graph'). Defaults to "table".
+            node_type (str, optional): Selected node type ('table', 'results', 'test_node',
+                'graph'). Defaults to "table".
             sub_type (str, optional): Graph subtype ('xy', 'bar_chart', 'box_plot'). Defaults to "xy".
         """
         if not target_model:
@@ -127,11 +132,26 @@ class WorkspaceMediator:
             self.display_sheet_model(target_model)
 
         elif node_type == "results":
+            # Switch to Results Ledger (index 1) and load the full report
             if self.center_stack:
                 self.center_stack.setCurrentIndex(1)
             if self.results_browser:
                 report_html = ScientificReportGenerator.generate_master_report(target_model)
                 self.results_browser.setHtml(report_html)
+
+        elif node_type == "test_node":
+            # Switch to Results Ledger and scroll directly to the specific analysis anchor
+            if self.center_stack:
+                self.center_stack.setCurrentIndex(1)
+            if self.results_browser:
+                report_html = ScientificReportGenerator.generate_master_report(target_model)
+                self.results_browser.setHtml(report_html)
+                # Retrieve anchor_id from the currently selected tree item
+                anchor_id = ""
+                if self.tree and self.tree.currentItem():
+                    anchor_id = self.tree.currentItem().data(0, self.tree.ANCHOR_ROLE) or ""
+                if anchor_id:
+                    self.results_browser.scrollToAnchor(anchor_id)
 
         elif node_type == "graph":
             if self.center_stack:
@@ -160,14 +180,114 @@ class WorkspaceMediator:
     def _update_results_ledger_and_tree(self) -> None:
         """Updates HTML results browser, switches central stacked pane to index 1,
         and synchronizes navigation tree to active sheet's Results Ledger node.
+        Also adds the most recent analysis entry as a leaf node in the tree.
         """
         report_html = ScientificReportGenerator.generate_master_report(self.model)
         if self.results_browser:
             self.results_browser.setHtml(report_html)
         if self.center_stack:
             self.center_stack.setCurrentIndex(1)
+        # Dynamically add the latest analysis leaf node to the tree
+        if self.tree and hasattr(self.tree, "add_analysis_node"):
+            history = getattr(self.model, "analysis_history", [])
+            if history:
+                self.tree.add_analysis_node(self.model, history[-1])
         if self.tree and hasattr(self.tree, "select_results_node"):
             self.tree.select_results_node(self.model)
+
+    def create_new_workspace(self, parent_window) -> None:
+        """Creates a fresh default workspace, clearing all current models and resetting UI state.
+
+        Clears analysis history, creates a new default ScientificTableModel,
+        repopulates the navigation tree, and resets the central stack to the
+        spreadsheet view (index 0).
+
+        Args:
+            parent_window (QWidget): Main window reference for dialog parenting.
+        """
+        # Create a fresh default model
+        fresh_model = ScientificTableModel(table_type="XY", sheet_name="Data Table 1")
+
+        # Reset active model on mediator
+        self.model = fresh_model
+
+        # Repopulate the navigation tree with only the new model
+        if self.tree:
+            self.tree.populate_models([fresh_model])
+
+        # Reset center stack to spreadsheet view (index 0)
+        if self.center_stack:
+            self.center_stack.setCurrentIndex(0)
+
+        # Clear the results browser
+        if self.results_browser:
+            self.results_browser.setHtml("")
+
+        # Reset current_filepath on the parent window if available
+        if hasattr(parent_window, "current_filepath"):
+            parent_window.current_filepath = None
+
+        # Display fresh model in the table widget
+        self.display_sheet_model(fresh_model)
+
+    def _handle_add_new_table(self) -> None:
+        """Creates a new ScientificTableModel and adds it to the workspace tree.
+
+        Called when the user selects '➕ Add New Data Table' from the context menu.
+        """
+        # Collect existing models from the tree
+        all_models = []
+        if self.tree:
+            for i in range(self.tree.root_tables.childCount()):
+                m = self.tree.root_tables.child(i).data(0, self.tree.MODEL_ROLE)
+                if m:
+                    all_models.append(m)
+
+        new_index = len(all_models) + 1
+        new_model = ScientificTableModel(
+            table_type="XY",
+            sheet_name=f"Data Table {new_index}"
+        )
+        all_models.append(new_model)
+
+        # Repopulate tree with all models including the new one
+        if self.tree:
+            self.tree.populate_models(all_models)
+
+        # Switch active model to the newly created one
+        self.display_sheet_model(new_model)
+        self.model = new_model
+
+    def _handle_delete_item(self, target_model) -> None:
+        """Removes a ScientificTableModel from the workspace and refreshes the tree.
+
+        Called when the user selects '🗑️ Delete Selected Item' from the context menu.
+
+        Args:
+            target_model: The ScientificTableModel to remove (may be None for category nodes).
+        """
+        if not target_model or not isinstance(target_model, ScientificTableModel):
+            return
+
+        # Collect all current models from tree
+        all_models = []
+        if self.tree:
+            for i in range(self.tree.root_tables.childCount()):
+                m = self.tree.root_tables.child(i).data(0, self.tree.MODEL_ROLE)
+                if m and m is not target_model:
+                    all_models.append(m)
+
+        # Always keep at least one model
+        if not all_models:
+            all_models = [ScientificTableModel(table_type="XY", sheet_name="Data Table 1")]
+
+        # Repopulate tree with remaining models
+        if self.tree:
+            self.tree.populate_models(all_models)
+
+        # Switch to first remaining model
+        self.model = all_models[0]
+        self.display_sheet_model(all_models[0])
 
     def open_analysis_hub(self, parent_window) -> None:
         """Launches GraphPad Prism 10 style 'Analyze Data' dialog modally.
@@ -233,6 +353,8 @@ class WorkspaceMediator:
                     f"• 95% Confidence Interval: ({res['confidence_interval'][0]:.4f}, {res['confidence_interval'][1]:.4f})\n\n"
                     f"ℹ️ Outcome: {'Statistically Significant (P < 0.05)' if res['p_value'] < 0.05 else 'Not Statistically Significant (P >= 0.05)'}"
                 )
+                html_block = ScientificReportGenerator.format_t_test_report(col_a, col_b, res, group_a, group_b)
+                self.model.add_analysis_result(f"Unpaired t-Test ({col_a} vs {col_b})", html_block)
                 self._show_info(parent_window, f"🔬 Analysis Results — {analysis_name}", summary_msg)
                 self._update_results_ledger_and_tree()
                 self.canvas.render_grouped_bar_chart(self.model)
@@ -252,6 +374,8 @@ class WorkspaceMediator:
                     f"• P-value: {r['p_value']:.5e}\n"
                     f"• DF Between: {r['df_between']}, Within: {r['df_within']}\n"
                 )
+                html_block = ScientificReportGenerator.format_one_way_anova_report(groups_dict, r)
+                self.model.add_analysis_result("One-Way ANOVA", html_block)
                 self._show_info(parent_window, "🔬 One-Way ANOVA", msg)
                 self._update_results_ledger_and_tree()
                 self.canvas.render_grouped_bar_chart(self.model)
@@ -283,6 +407,9 @@ class WorkspaceMediator:
                     f"• R-squared: {r['r_squared']:.4f}\n"
                     f"• P-value: {r['p_value']:.5e}\n"
                 )
+                groups_dict = {x_col: x_vec, selected_cols[0]: y_vec}
+                html_block = ScientificReportGenerator.format_linear_regression_report(x_col, selected_cols[0], r, groups_dict=groups_dict)
+                self.model.add_analysis_result(f"Linear Regression ({x_col} vs {selected_cols[0]})", html_block)
                 self._show_info(parent_window, "🔬 Linear Regression", msg)
                 fit_curve_y = r["slope"] * x_vec + r["intercept"]
                 self.canvas.refresh_plot(x_vec, {selected_cols[0]: y_vec}, fit_curve_y=fit_curve_y)
@@ -304,6 +431,8 @@ class WorkspaceMediator:
                     f"• P-value: {r['p_value']:.5e}\n"
                     f"• Total N: {r['total_n']}\n"
                 )
+                html_block = ScientificReportGenerator.format_kruskal_wallis_report(groups_dict, r)
+                self.model.add_analysis_result("Kruskal-Wallis Test", html_block)
                 self._show_info(parent_window, "🔬 Kruskal-Wallis ANOVA", msg)
                 self._update_results_ledger_and_tree()
                 self.canvas.render_grouped_bar_chart(self.model)
@@ -329,6 +458,9 @@ class WorkspaceMediator:
                     f"• Half-Life: {r['half_life']:.4f}\n"
                     f"• R-squared: {analysis['results']['r_squared']:.4f}\n"
                 )
+                groups_dict = {x_col: x_vec, selected_cols[0]: y_vec}
+                html_block = ScientificReportGenerator.format_exponential_report(x_col, selected_cols[0], model_type, analysis["results"], groups_dict=groups_dict)
+                self.model.add_analysis_result(f"Exponential {model_type.capitalize()}", html_block)
                 self._show_info(parent_window, f"🔬 Exponential {model_type.capitalize()}", msg)
                 fit_func = one_phase_association if model_type == "association" else one_phase_decay
                 fit_curve_y = fit_func(x_vec, r['y0'], r['plateau'], r['k'])
@@ -355,6 +487,9 @@ class WorkspaceMediator:
                     f"• Km 95% CI: ({r['km_ci95'][0]:.4f}, {r['km_ci95'][1]:.4f})\n"
                     f"• R-squared: {r['r_squared']:.4f}\n"
                 )
+                groups_dict = {x_col: s_vec, selected_cols[0]: v_vec}
+                html_block = ScientificReportGenerator.format_michaelis_menten_report(x_col, selected_cols[0], r, groups_dict=groups_dict)
+                self.model.add_analysis_result(f"Michaelis-Menten Kinetics ({selected_cols[0]})", html_block)
                 self._show_info(parent_window, "🔬 Michaelis-Menten Kinetics", msg)
                 fit_curve_y = michaelis_menten_model(s_vec, r['vmax'], r['km'])
                 self.canvas.refresh_plot(s_vec, {selected_cols[0]: v_vec}, fit_curve_y=fit_curve_y)
@@ -375,6 +510,9 @@ class WorkspaceMediator:
                     f"• ROUT (Q=1%): {r_rout['outliers_count']} outlier(s) detected\n"
                     f"• Grubbs Test: G = {r_grubbs['g_statistic']:.4f} (p = {r_grubbs['p_value']:.4f}), Outlier: {r_grubbs['is_outlier']}\n"
                 )
+                groups_dict = {selected_cols[0]: y_vec}
+                html_block = ScientificReportGenerator.format_outliers_report(selected_cols[0], analysis["results"], groups_dict=groups_dict)
+                self.model.add_analysis_result(f"Outlier Detection ({selected_cols[0]})", html_block)
                 self._show_info(parent_window, "🔬 Outlier Detection", msg)
                 self._update_results_ledger_and_tree()
                 self.canvas.render_box_plot(self.model)
@@ -399,6 +537,9 @@ class WorkspaceMediator:
                     f"• Lower 95% LoA: {r['lower_loa']:.4f}\n"
                     f"• Upper 95% LoA: {r['upper_loa']:.4f}\n"
                 )
+                groups_dict = {selected_cols[0]: m1, selected_cols[1]: m2}
+                html_block = ScientificReportGenerator.format_bland_altman_report(selected_cols[0], selected_cols[1], r, groups_dict=groups_dict)
+                self.model.add_analysis_result(f"Bland-Altman ({selected_cols[0]} vs {selected_cols[1]})", html_block)
                 self._show_info(parent_window, "🔬 Bland-Altman Analysis", msg)
                 self._update_results_ledger_and_tree()
                 self.sync_data_to_visualization()
@@ -418,6 +559,9 @@ class WorkspaceMediator:
                     f"• Geisser-Greenhouse Epsilon: {r['geisser_greenhouse_epsilon']:.4f}\n"
                     f"• Adjusted p (GG): {r['p_value_gg']:.5e}\n"
                 )
+                groups_dict = {col: self.model.get_column_data(col) for col in selected_cols}
+                html_block = ScientificReportGenerator.format_rm_anova_report(selected_cols, analysis["results"], groups_dict=groups_dict)
+                self.model.add_analysis_result("Repeated Measures ANOVA", html_block)
                 self._show_info(parent_window, "🔬 RM-ANOVA Results", msg)
                 self._update_results_ledger_and_tree()
                 self.canvas.render_grouped_bar_chart(self.model)
@@ -442,6 +586,9 @@ class WorkspaceMediator:
                     f"• P-value (vs 0.5): {r['p_value']:.5e}\n"
                     f"• Youden J Index: {r['youden_j']:.4f} (Optimal Threshold: {r['optimal_threshold']})\n"
                 )
+                groups_dict = {selected_cols[0]: y_true, selected_cols[1]: y_score}
+                html_block = ScientificReportGenerator.format_roc_report(selected_cols[0], selected_cols[1], r, groups_dict=groups_dict)
+                self.model.add_analysis_result(f"ROC Curve ({selected_cols[0]} vs {selected_cols[1]})", html_block)
                 self._show_info(parent_window, "🔬 ROC Curve Analysis", msg)
                 self._update_results_ledger_and_tree()
                 self.sync_data_to_visualization()
@@ -467,6 +614,9 @@ class WorkspaceMediator:
                     f"• OR 95% CI: ({r['odds_ratio_ci95'][0]:.4f}, {r['odds_ratio_ci95'][1]:.4f})\n"
                     f"• Pseudo R-squared: {r['pseudo_r2']:.4f}\n"
                 )
+                groups_dict = {selected_cols[0]: x_vec, selected_cols[1]: y_vec}
+                html_block = ScientificReportGenerator.format_logistic_regression_report(selected_cols[0], selected_cols[1], r, groups_dict=groups_dict)
+                self.model.add_analysis_result(f"Logistic Regression ({selected_cols[0]} vs {selected_cols[1]})", html_block)
                 self._show_info(parent_window, "🔬 Logistic Regression", msg)
                 self._update_results_ledger_and_tree()
                 self.sync_data_to_visualization()
@@ -489,6 +639,9 @@ class WorkspaceMediator:
                     f"• Top Group F: {rg['f_statistic']:.4f} (p = {rg['p_value']:.5e})\n"
                     f"• Subgroup (Nested) F: {rsub['f_statistic']:.4f} (p = {rsub['p_value']:.5e})\n"
                 )
+                groups_dict = {c: self.model.get_column_data(c) for c in cols[:3] if self.model.get_column_data(c).size > 0}
+                html_block = ScientificReportGenerator.format_nested_anova_report(cols[:3], analysis["results"], groups_dict=groups_dict)
+                self.model.add_analysis_result("Nested One-Way ANOVA", html_block)
                 self._show_info(parent_window, "🔬 Nested ANOVA", msg)
                 self._update_results_ledger_and_tree()
                 self.canvas.render_grouped_bar_chart(self.model)
@@ -496,6 +649,10 @@ class WorkspaceMediator:
             # Condition 15: Non-linear regression curve fitting
             elif "nonlinear" in analysis_lower or "curve fit" in analysis_lower or "regression" in analysis_lower:
                 self.sync_data_to_visualization()
+                groups_dict = {col: self.model.get_column_data(col) for col in selected_cols if self.model.get_column_data(col).size > 0}
+                desc_html = ScientificReportGenerator._build_descriptive_table(groups_dict) if groups_dict else ""
+                html_block = f"<div class='analysis-entry' style='margin-top: 20px; border-top: 1px solid #3d3d3d; padding-top: 10px;'><h3>📈 {analysis_name}</h3>{desc_html}<p>Executed on columns: {', '.join(selected_cols)}</p></div>"
+                self.model.add_analysis_result(analysis_name, html_block)
                 self._update_results_ledger_and_tree()
                 self._show_info(
                     parent_window,
@@ -505,6 +662,10 @@ class WorkspaceMediator:
 
             # Fallback for other analytical options
             else:
+                groups_dict = {col: self.model.get_column_data(col) for col in selected_cols if self.model.get_column_data(col).size > 0}
+                desc_html = ScientificReportGenerator._build_descriptive_table(groups_dict) if groups_dict else ""
+                html_block = f"<div class='analysis-entry' style='margin-top: 20px; border-top: 1px solid #3d3d3d; padding-top: 10px;'><h3>🔬 {analysis_name}</h3>{desc_html}<p>Executed on columns: {', '.join(selected_cols)}</p></div>"
+                self.model.add_analysis_result(analysis_name, html_block)
                 self._update_results_ledger_and_tree()
                 self.canvas.render_grouped_bar_chart(self.model)
                 self._show_info(
@@ -526,10 +687,7 @@ class WorkspaceMediator:
         if not target_model:
             return
 
-        self.model.table_type = target_model.table_type
-        self.model.sheet_name = getattr(target_model, "sheet_name", "Selected Sheet")
-        self.model.name = getattr(target_model, "name", self.model.sheet_name)
-        self.model._data_frame = target_model._data_frame
+        self.model = target_model
 
         # Disconnect cell update signal to prevent recursive cellChanged cascades during bulk item insertion
         try:
@@ -650,6 +808,8 @@ class WorkspaceMediator:
             f"• 95% Confidence Interval: ({res['confidence_interval'][0]:.4f}, {res['confidence_interval'][1]:.4f})\n\n"
             f"ℹ️ Outcome: {'Statistically Significant (P < 0.05)' if res['p_value'] < 0.05 else 'Not Statistically Significant (P >= 0.05)'}"
         )
+        html_block = ScientificReportGenerator.format_t_test_report("Y1", "Y2", res, group_a, group_b)
+        self.model.add_analysis_result("Unpaired t-Test (Y1 vs Y2)", html_block)
         self._show_info(parent_window, "🔬 Analysis Results", summary_msg)
         self._update_results_ledger_and_tree()
         self.canvas.render_grouped_bar_chart(self.model)
@@ -687,6 +847,8 @@ class WorkspaceMediator:
             f"• Factor B ({col_b}): F = {fb['f_statistic']:.4f}, p = {fb['p_value']:.5e}\n"
             f"• Interaction ({col_a} x {col_b}): F = {fab['f_statistic']:.4f}, p = {fab['p_value']:.5e}\n"
         )
+        html_block = ScientificReportGenerator.format_two_way_anova_report(col_a, col_b, col_val, r)
+        self.model.add_analysis_result(f"Two-Way ANOVA ({col_a} x {col_b})", html_block)
         self._show_info(parent_window, "🔬 Two-Way ANOVA Results", summary_msg)
         self._update_results_ledger_and_tree()
         self.canvas.render_grouped_bar_chart(self.model)
@@ -740,6 +902,8 @@ class WorkspaceMediator:
             f"• Total Censored: {summary['total_censored']}\n"
             f"• Estimated Median Survival Time: {median_str}\n"
         )
+        html_block = ScientificReportGenerator.format_kaplan_meier_report(time_col, event_col, analysis["results"], summary)
+        self.model.add_analysis_result(f"Kaplan-Meier Survival Analysis ({time_col} vs {event_col})", html_block)
         self._show_info(parent_window, "🔬 Kaplan-Meier Results", summary_msg)
         self._update_results_ledger_and_tree()
         self.canvas.render_kaplan_meier_survival(analysis["results"])
