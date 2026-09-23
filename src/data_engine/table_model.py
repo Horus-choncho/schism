@@ -89,8 +89,8 @@ class ScientificTableModel:
     def get_column_data(self, column_name: str) -> np.ndarray:
         """Extracts an isolated 1D numpy array representing a single experimental variant.
 
-        Drops missing (NaN) values to isolate pure numeric vectors for downstream
-        statistical computations and plotting.
+        Drops missing (NaN) and non-numeric values to isolate pure numeric vectors
+        for downstream statistical computations and plotting.
 
         Args:
             column_name (str): Target column header label to extract.
@@ -99,9 +99,8 @@ class ScientificTableModel:
             np.ndarray: 1D NumPy array of float64 data values, excluding NaNs.
         """
         if column_name in self._data_frame.columns:
-            # Drop NaN values so downstream statistical functions (e.g. t-tests, regressions)
-            # act exclusively on complete numeric observations.
-            return self._data_frame[column_name].dropna().to_numpy(dtype=float)
+            s = pd.to_numeric(self._data_frame[column_name], errors='coerce').dropna()
+            return s.to_numpy(dtype=float)
         return np.array([], dtype=float)
 
     def get_summary_statistics(self, column_name: str) -> dict:

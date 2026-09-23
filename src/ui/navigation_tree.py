@@ -58,10 +58,9 @@ class ScientificNavigationTree(QTreeWidget):
                 outline: 0;
             }
             QTreeWidget::item {
-                height: 28px;
+                height: 30px;
                 border-radius: 4px;
-                padding-left: 8px;
-                padding-right: 8px;
+                padding: 4px 8px;
                 margin-top: 1px;
                 margin-bottom: 1px;
                 color: #ffffff;
@@ -145,6 +144,19 @@ class ScientificNavigationTree(QTreeWidget):
                     child.setHidden(False)
                 else:
                     child.setHidden(True)
+
+    def select_results_node(self, model: ScientificTableModel) -> None:
+        """Synchronizes navigation tree selection to the Results Ledger node for target model."""
+        if not model or not self.root_results:
+            return
+        for i in range(self.root_results.childCount()):
+            child = self.root_results.child(i)
+            item_model = child.data(0, self.MODEL_ROLE)
+            if item_model is model or item_model == model:
+                self.blockSignals(True)
+                self.setCurrentItem(child)
+                self.blockSignals(False)
+                break
 
     def _on_item_changed(self, current: QTreeWidgetItem, previous: QTreeWidgetItem):
         """Handles selection signal and emits target model and navigation payloads."""

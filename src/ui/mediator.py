@@ -25,8 +25,20 @@ from src.ui.table_view import ScientificTableWidget
 from src.ui.plot_canvas import ScientificPlotCanvas
 from src.analysis.curve_fitting import CurveFittingEngine, dose_response_model
 from src.analysis.t_test import TTestEngine
+from src.analysis.anova_engine import AnovaEngine
 from src.analysis.anova_two_way import TwoWayAnovaEngine
 from src.analysis.survival_engine import KaplanMeierEngine
+from src.analysis.kruskal_wallis import KruskalWallisEngine
+from src.analysis.exponential_decay import ExponentialDecayEngine, one_phase_decay, one_phase_association
+from src.analysis.michaelis_menten import MichaelisMentenEngine, michaelis_menten_model
+from src.analysis.outliers_engine import OutliersEngine
+from src.analysis.bland_altman import BlandAltmanEngine
+from src.analysis.rm_anova import RepeatedMeasuresAnovaEngine
+from src.analysis.roc_engine import RocEngine
+from src.analysis.logistic_regression import LogisticRegressionEngine
+from src.analysis.nested_anova import NestedAnovaEngine
+from src.analysis.linear_regression import LinearRegressionEngine
+from src.analysis.one_sample_test import OneSampleTestEngine
 from src.data_engine.file_handler import ScientificFileHandler
 from src.data_engine.prism_parser import PrismParser, PrismParseError
 
@@ -130,6 +142,33 @@ class WorkspaceMediator:
             else:
                 self.sync_data_to_visualization()
 
+    def _show_info(self, parent_window, title: str, message: str):
+        if os.environ.get("QT_QPA_PLATFORM") == "offscreen":
+            return QMessageBox.StandardButton.Ok
+        return QMessageBox.information(parent_window, title, message)
+
+    def _show_warning(self, parent_window, title: str, message: str):
+        if os.environ.get("QT_QPA_PLATFORM") == "offscreen":
+            return QMessageBox.StandardButton.Ok
+        return QMessageBox.warning(parent_window, title, message)
+
+    def _show_critical(self, parent_window, title: str, message: str):
+        if os.environ.get("QT_QPA_PLATFORM") == "offscreen":
+            return QMessageBox.StandardButton.Ok
+        return QMessageBox.critical(parent_window, title, message)
+
+    def _update_results_ledger_and_tree(self) -> None:
+        """Updates HTML results browser, switches central stacked pane to index 1,
+        and synchronizes navigation tree to active sheet's Results Ledger node.
+        """
+        report_html = ScientificReportGenerator.generate_master_report(self.model)
+        if self.results_browser:
+            self.results_browser.setHtml(report_html)
+        if self.center_stack:
+            self.center_stack.setCurrentIndex(1)
+        if self.tree and hasattr(self.tree, "select_results_node"):
+            self.tree.select_results_node(self.model)
+
     def open_analysis_hub(self, parent_window) -> None:
         """Launches GraphPad Prism 10 style 'Analyze Data' dialog modally.
 
@@ -144,11 +183,11 @@ class WorkspaceMediator:
             selected_cols = dialog.get_selected_column_names()
 
             if not analysis_name:
-                QMessageBox.warning(parent_window, "⚠️ Selection Required", "Please select an analysis from the list.")
+                self._show_warning(parent_window, "⚠️ Selection Required", "Please select an analysis from the list.")
                 return
 
             if not selected_cols:
-                QMessageBox.warning(parent_window, "⚠️ Selection Required", "Please select at least one data set column to analyze.")
+                self._show_warning(parent_window, "⚠️ Selection Required", "Please select at least one data set column to analyze.")
                 return
 
             analysis_lower = analysis_name.lower()
@@ -156,7 +195,7 @@ class WorkspaceMediator:
             # Condition 1: Unpaired t tests and non-parametric comparisons
             if "t test" in analysis_lower or "t tests" in analysis_lower:
                 if len(selected_cols) != 2:
-                    QMessageBox.warning(
+                    self._show_warning(
                         parent_window,
                         "⚠️ Selection Error",
                         f"Unpaired t-test requires exactly 2 data set columns selected (you checked {len(selected_cols)})."
@@ -168,7 +207,7 @@ class WorkspaceMediator:
                 group_b = self.model.get_column_data(col_b)
 
                 if group_a.size < 2 or group_b.size < 2:
-                    QMessageBox.warning(
+                    self._show_warning(
                         parent_window,
                         "⚠️ Insufficient Data",
                         f"Columns '{col_a}' and '{col_b}' must both contain at least 2 observations."
@@ -177,7 +216,7 @@ class WorkspaceMediator:
 
                 analysis = TTestEngine.calculate_unpaired_t_test(group_a, group_b, equal_var=True)
                 if not analysis["success"]:
-                    QMessageBox.critical(parent_window, "❌ Math Exception", analysis["error"])
+                    self._show_critical(parent_window, "❌ Math Exception", analysis["error"])
                     return
 
                 res = analysis["results"]
@@ -194,12 +233,271 @@ class WorkspaceMediator:
                     f"• 95% Confidence Interval: ({res['confidence_interval'][0]:.4f}, {res['confidence_interval'][1]:.4f})\n\n"
                     f"ℹ️ Outcome: {'Statistically Significant (P < 0.05)' if res['p_value'] < 0.05 else 'Not Statistically Significant (P >= 0.05)'}"
                 )
-                QMessageBox.information(parent_window, f"🔬 Analysis Results — {analysis_name}", summary_msg)
+                self._show_info(parent_window, f"🔬 Analysis Results — {analysis_name}", summary_msg)
+                self._update_results_ledger_and_tree()
+                self.canvas.render_grouped_bar_chart(self.model)
 
-            # Condition 2: Non-linear regression curve fitting
+            # Condition 2: One-Way ANOVA
+            elif "one-way" in analysis_lower or "one way" in analysis_lower:
+                groups_dict = {col: self.model.get_column_data(col) for col in selected_cols}
+                analysis = AnovaEngine.calculate_one_way_anova(groups_dict)
+                if not analysis["success"]:
+                    self._show_critical(parent_window, "❌ Math Exception", analysis["error"])
+                    return
+                r = analysis["results"]
+                msg = (
+                    f"📊 One-Way ANOVA Results\n"
+                    f"-----------------------------------------\n"
+                    f"• F Statistic: {r['f_statistic']:.4f}\n"
+                    f"• P-value: {r['p_value']:.5e}\n"
+                    f"• DF Between: {r['df_between']}, Within: {r['df_within']}\n"
+                )
+                self._show_info(parent_window, "🔬 One-Way ANOVA", msg)
+                self._update_results_ledger_and_tree()
+                self.canvas.render_grouped_bar_chart(self.model)
+
+            # Condition 3: Two-Way ANOVA
+            elif "two-way" in analysis_lower or "two way" in analysis_lower:
+                self.execute_two_way_anova(parent_window)
+
+            # Condition 4: Kaplan-Meier Survival
+            elif "survival" in analysis_lower or "kaplan" in analysis_lower:
+                self.execute_kaplan_meier_survival(parent_window)
+
+            # Condition 5: Simple Linear Regression
+            elif "linear regression" in analysis_lower:
+                all_cols = list(self.model._data_frame.columns)
+                x_col = all_cols[0]
+                x_vec = self.model.get_column_data(x_col)
+                y_vec = self.model.get_column_data(selected_cols[0])
+                analysis = LinearRegressionEngine.calculate_linear_regression(x_vec, y_vec)
+                if not analysis["success"]:
+                    self._show_critical(parent_window, "❌ Math Exception", analysis["error"])
+                    return
+                r = analysis["results"]
+                msg = (
+                    f"📈 Simple Linear Regression\n"
+                    f"-----------------------------------------\n"
+                    f"• Slope (Beta1): {r['slope']:.4f} ± {r['slope_se']:.4f}\n"
+                    f"• Intercept (Beta0): {r['intercept']:.4f} ± {r['intercept_se']:.4f}\n"
+                    f"• R-squared: {r['r_squared']:.4f}\n"
+                    f"• P-value: {r['p_value']:.5e}\n"
+                )
+                self._show_info(parent_window, "🔬 Linear Regression", msg)
+                fit_curve_y = r["slope"] * x_vec + r["intercept"]
+                self.canvas.refresh_plot(x_vec, {selected_cols[0]: y_vec}, fit_curve_y=fit_curve_y)
+                self._update_results_ledger_and_tree()
+
+            # Condition 6: Kruskal-Wallis & Dunn's post-hoc
+            elif "kruskal" in analysis_lower or "dunn" in analysis_lower:
+                groups_dict = {col: self.model.get_column_data(col) for col in selected_cols}
+                analysis = KruskalWallisEngine.calculate_kruskal_wallis(groups_dict)
+                if not analysis["success"]:
+                    self._show_critical(parent_window, "❌ Math Exception", analysis["error"])
+                    return
+                r = analysis["results"]
+                msg = (
+                    f"📊 Kruskal-Wallis Test Results\n"
+                    f"-----------------------------------------\n"
+                    f"• H Statistic: {r['h_statistic']:.4f}\n"
+                    f"• Degrees of Freedom: {r['degrees_of_freedom']}\n"
+                    f"• P-value: {r['p_value']:.5e}\n"
+                    f"• Total N: {r['total_n']}\n"
+                )
+                self._show_info(parent_window, "🔬 Kruskal-Wallis ANOVA", msg)
+                self._update_results_ledger_and_tree()
+                self.canvas.render_grouped_bar_chart(self.model)
+
+            # Condition 7: One-phase exponential decay / association
+            elif "exponential" in analysis_lower or "decay" in analysis_lower:
+                all_cols = list(self.model._data_frame.columns)
+                x_col = all_cols[0]
+                x_vec = self.model.get_column_data(x_col)
+                y_vec = self.model.get_column_data(selected_cols[0])
+                model_type = "association" if "association" in analysis_lower or "growth" in analysis_lower else "decay"
+                analysis = ExponentialDecayEngine.calculate_exponential_fit(x_vec, y_vec, model_type=model_type)
+                if not analysis["success"]:
+                    self._show_critical(parent_window, "❌ Math Exception", analysis["error"])
+                    return
+                r = analysis["results"]["params"]
+                msg = (
+                    f"📈 Exponential {model_type.capitalize()} Fit\n"
+                    f"-----------------------------------------\n"
+                    f"• Y0: {r['y0']:.4f}\n"
+                    f"• Plateau: {r['plateau']:.4f}\n"
+                    f"• K: {r['k']:.4f}\n"
+                    f"• Half-Life: {r['half_life']:.4f}\n"
+                    f"• R-squared: {analysis['results']['r_squared']:.4f}\n"
+                )
+                self._show_info(parent_window, f"🔬 Exponential {model_type.capitalize()}", msg)
+                fit_func = one_phase_association if model_type == "association" else one_phase_decay
+                fit_curve_y = fit_func(x_vec, r['y0'], r['plateau'], r['k'])
+                self.canvas.refresh_plot(x_vec, {selected_cols[0]: y_vec}, fit_curve_y=fit_curve_y)
+                self._update_results_ledger_and_tree()
+
+            # Condition 8: Michaelis-Menten enzyme kinetics
+            elif "michaelis" in analysis_lower or "menten" in analysis_lower or "kinetics" in analysis_lower:
+                all_cols = list(self.model._data_frame.columns)
+                x_col = all_cols[0]
+                s_vec = self.model.get_column_data(x_col)
+                v_vec = self.model.get_column_data(selected_cols[0])
+                analysis = MichaelisMentenEngine.calculate_michaelis_menten(s_vec, v_vec)
+                if not analysis["success"]:
+                    self._show_critical(parent_window, "❌ Math Exception", analysis["error"])
+                    return
+                r = analysis["results"]
+                msg = (
+                    f"🧪 Michaelis-Menten Kinetics\n"
+                    f"-----------------------------------------\n"
+                    f"• Vmax: {r['vmax']:.4f} ± {r['vmax_se']:.4f}\n"
+                    f"• Km: {r['km']:.4f} ± {r['km_se']:.4f}\n"
+                    f"• Vmax 95% CI: ({r['vmax_ci95'][0]:.4f}, {r['vmax_ci95'][1]:.4f})\n"
+                    f"• Km 95% CI: ({r['km_ci95'][0]:.4f}, {r['km_ci95'][1]:.4f})\n"
+                    f"• R-squared: {r['r_squared']:.4f}\n"
+                )
+                self._show_info(parent_window, "🔬 Michaelis-Menten Kinetics", msg)
+                fit_curve_y = michaelis_menten_model(s_vec, r['vmax'], r['km'])
+                self.canvas.refresh_plot(s_vec, {selected_cols[0]: v_vec}, fit_curve_y=fit_curve_y)
+                self._update_results_ledger_and_tree()
+
+            # Condition 9: ROUT & Grubbs outlier detection
+            elif "outlier" in analysis_lower or "rout" in analysis_lower or "grubbs" in analysis_lower:
+                y_vec = self.model.get_column_data(selected_cols[0])
+                analysis = OutliersEngine.detect_outliers(y_vec)
+                if not analysis["success"]:
+                    self._show_critical(parent_window, "❌ Math Exception", analysis["error"])
+                    return
+                r_rout = analysis["results"]["rout"]
+                r_grubbs = analysis["results"]["grubbs"]
+                msg = (
+                    f"🔍 Outlier Detection Summary ({selected_cols[0]})\n"
+                    f"-----------------------------------------\n"
+                    f"• ROUT (Q=1%): {r_rout['outliers_count']} outlier(s) detected\n"
+                    f"• Grubbs Test: G = {r_grubbs['g_statistic']:.4f} (p = {r_grubbs['p_value']:.4f}), Outlier: {r_grubbs['is_outlier']}\n"
+                )
+                self._show_info(parent_window, "🔬 Outlier Detection", msg)
+                self._update_results_ledger_and_tree()
+                self.canvas.render_box_plot(self.model)
+
+            # Condition 10: Bland-Altman method comparison
+            elif "bland" in analysis_lower or "altman" in analysis_lower:
+                if len(selected_cols) < 2:
+                    self._show_warning(parent_window, "⚠️ Selection Error", "Bland-Altman analysis requires 2 selected method columns.")
+                    return
+                m1 = self.model.get_column_data(selected_cols[0])
+                m2 = self.model.get_column_data(selected_cols[1])
+                analysis = BlandAltmanEngine.calculate_bland_altman(m1, m2)
+                if not analysis["success"]:
+                    self._show_critical(parent_window, "❌ Math Exception", analysis["error"])
+                    return
+                r = analysis["results"]
+                msg = (
+                    f"📐 Bland-Altman Method Comparison\n"
+                    f"-----------------------------------------\n"
+                    f"• Bias (Mean Diff): {r['bias']:.4f} ± {r['sd_bias']:.4f}\n"
+                    f"• Bias 95% CI: ({r['bias_ci95'][0]:.4f}, {r['bias_ci95'][1]:.4f})\n"
+                    f"• Lower 95% LoA: {r['lower_loa']:.4f}\n"
+                    f"• Upper 95% LoA: {r['upper_loa']:.4f}\n"
+                )
+                self._show_info(parent_window, "🔬 Bland-Altman Analysis", msg)
+                self._update_results_ledger_and_tree()
+                self.sync_data_to_visualization()
+
+            # Condition 11: Repeated Measures ANOVA
+            elif "repeated" in analysis_lower or "rm_anova" in analysis_lower or "rm anova" in analysis_lower:
+                sub_df = self.model._data_frame[selected_cols]
+                analysis = RepeatedMeasuresAnovaEngine.calculate_rm_anova(sub_df)
+                if not analysis["success"]:
+                    self._show_critical(parent_window, "❌ Math Exception", analysis["error"])
+                    return
+                r = analysis["results"]["treatment"]
+                msg = (
+                    f"🔄 Repeated Measures ANOVA\n"
+                    f"-----------------------------------------\n"
+                    f"• Treatment F: {r['f_statistic']:.4f}, p = {r['p_value']:.5e}\n"
+                    f"• Geisser-Greenhouse Epsilon: {r['geisser_greenhouse_epsilon']:.4f}\n"
+                    f"• Adjusted p (GG): {r['p_value_gg']:.5e}\n"
+                )
+                self._show_info(parent_window, "🔬 RM-ANOVA Results", msg)
+                self._update_results_ledger_and_tree()
+                self.canvas.render_grouped_bar_chart(self.model)
+
+            # Condition 12: ROC curve and AUC analysis
+            elif "roc" in analysis_lower or "auc" in analysis_lower:
+                if len(selected_cols) < 2:
+                    self._show_warning(parent_window, "⚠️ Selection Error", "ROC analysis requires 2 columns (Binary Outcome, Score).")
+                    return
+                y_true = self.model.get_column_data(selected_cols[0])
+                y_score = self.model.get_column_data(selected_cols[1])
+                analysis = RocEngine.calculate_roc_analysis(y_true, y_score)
+                if not analysis["success"]:
+                    self._show_critical(parent_window, "❌ Math Exception", analysis["error"])
+                    return
+                r = analysis["results"]
+                msg = (
+                    f"📈 ROC Curve & AUC Analysis\n"
+                    f"-----------------------------------------\n"
+                    f"• Area Under Curve (AUC): {r['auc']:.4f} ± {r['auc_se']:.4f}\n"
+                    f"• AUC 95% CI: ({r['auc_ci95'][0]:.4f}, {r['auc_ci95'][1]:.4f})\n"
+                    f"• P-value (vs 0.5): {r['p_value']:.5e}\n"
+                    f"• Youden J Index: {r['youden_j']:.4f} (Optimal Threshold: {r['optimal_threshold']})\n"
+                )
+                self._show_info(parent_window, "🔬 ROC Curve Analysis", msg)
+                self._update_results_ledger_and_tree()
+                self.sync_data_to_visualization()
+
+            # Condition 13: Simple binary logistic regression
+            elif "logistic" in analysis_lower:
+                if len(selected_cols) < 2:
+                    self._show_warning(parent_window, "⚠️ Selection Error", "Logistic regression requires 2 columns (Predictor X, Binary Y).")
+                    return
+                x_vec = self.model.get_column_data(selected_cols[0])
+                y_vec = self.model.get_column_data(selected_cols[1])
+                analysis = LogisticRegressionEngine.calculate_logistic_regression(x_vec, y_vec)
+                if not analysis["success"]:
+                    self._show_critical(parent_window, "❌ Math Exception", analysis["error"])
+                    return
+                r = analysis["results"]
+                msg = (
+                    f"📊 Binary Logistic Regression\n"
+                    f"-----------------------------------------\n"
+                    f"• Intercept: {r['intercept']:.4f}\n"
+                    f"• Slope (Beta1): {r['slope']:.4f} (p = {r['p_value']:.5e})\n"
+                    f"• Odds Ratio (OR): {r['odds_ratio']:.4f}\n"
+                    f"• OR 95% CI: ({r['odds_ratio_ci95'][0]:.4f}, {r['odds_ratio_ci95'][1]:.4f})\n"
+                    f"• Pseudo R-squared: {r['pseudo_r2']:.4f}\n"
+                )
+                self._show_info(parent_window, "🔬 Logistic Regression", msg)
+                self._update_results_ledger_and_tree()
+                self.sync_data_to_visualization()
+
+            # Condition 14: Nested one-way ANOVA
+            elif "nested" in analysis_lower:
+                cols = list(self.model._data_frame.columns)
+                if len(cols) < 3:
+                    self._show_warning(parent_window, "⚠️ Selection Error", "Nested ANOVA requires 3 columns (Group, Subgroup, Value).")
+                    return
+                analysis = NestedAnovaEngine.calculate_nested_anova(self.model._data_frame, cols[0], cols[1], cols[2])
+                if not analysis["success"]:
+                    self._show_critical(parent_window, "❌ Math Exception", analysis["error"])
+                    return
+                rg = analysis["results"]["group"]
+                rsub = analysis["results"]["subgroup_nested"]
+                msg = (
+                    f"🌳 Nested One-Way ANOVA\n"
+                    f"-----------------------------------------\n"
+                    f"• Top Group F: {rg['f_statistic']:.4f} (p = {rg['p_value']:.5e})\n"
+                    f"• Subgroup (Nested) F: {rsub['f_statistic']:.4f} (p = {rsub['p_value']:.5e})\n"
+                )
+                self._show_info(parent_window, "🔬 Nested ANOVA", msg)
+                self._update_results_ledger_and_tree()
+                self.canvas.render_grouped_bar_chart(self.model)
+
+            # Condition 15: Non-linear regression curve fitting
             elif "nonlinear" in analysis_lower or "curve fit" in analysis_lower or "regression" in analysis_lower:
                 self.sync_data_to_visualization()
-                QMessageBox.information(
+                self._update_results_ledger_and_tree()
+                self._show_info(
                     parent_window,
                     "📈 Curve Fitting Executed",
                     f"Nonlinear regression curve fitting updated for data sets: {', '.join(selected_cols)}"
@@ -207,7 +505,9 @@ class WorkspaceMediator:
 
             # Fallback for other analytical options
             else:
-                QMessageBox.information(
+                self._update_results_ledger_and_tree()
+                self.canvas.render_grouped_bar_chart(self.model)
+                self._show_info(
                     parent_window,
                     f"🔬 Analysis Selected: {analysis_name}",
                     f"Selected analysis '{analysis_name}' on data sets: {', '.join(selected_cols)}"
@@ -306,6 +606,10 @@ class WorkspaceMediator:
                     params["log_ec50"]
                 )
 
+        # Update plot canvas axis titles dynamically from active model column headers
+        y_title_str = ", ".join([str(k) for k in y_datasets_dict.keys()]) if y_datasets_dict else "Dependent Variable (Y-Axis)"
+        self.canvas.set_axis_titles(x_title=str(x_col), y_title=y_title_str)
+
         # Update plot canvas graphics items
         self.canvas.refresh_plot(x_data, y_datasets_dict, fit_curve_y=fit_curve_y)
 
@@ -319,7 +623,7 @@ class WorkspaceMediator:
         group_b = self.model.get_column_data("Y2")
 
         if group_a.size < 2 or group_b.size < 2:
-            QMessageBox.warning(
+            self._show_warning(
                 parent_window, 
                 "⚠️ Insufficient Vectors", 
                 "To compute an unpaired t-test, columns Y1 and Y2 must both contain at least 2 observations."
@@ -329,7 +633,7 @@ class WorkspaceMediator:
         analysis = TTestEngine.calculate_unpaired_t_test(group_a, group_b, equal_var=True)
 
         if not analysis["success"]:
-            QMessageBox.critical(parent_window, "❌ Math Exception", analysis["error"])
+            self._show_critical(parent_window, "❌ Math Exception", analysis["error"])
             return
 
         res = analysis["results"]
@@ -346,7 +650,9 @@ class WorkspaceMediator:
             f"• 95% Confidence Interval: ({res['confidence_interval'][0]:.4f}, {res['confidence_interval'][1]:.4f})\n\n"
             f"ℹ️ Outcome: {'Statistically Significant (P < 0.05)' if res['p_value'] < 0.05 else 'Not Statistically Significant (P >= 0.05)'}"
         )
-        QMessageBox.information(parent_window, "🔬 Analysis Results", summary_msg)
+        self._show_info(parent_window, "🔬 Analysis Results", summary_msg)
+        self._update_results_ledger_and_tree()
+        self.canvas.render_grouped_bar_chart(self.model)
 
     def execute_two_way_anova(self, parent_window) -> None:
         """Executes Two-Way ANOVA analysis on the active spreadsheet model if >= 3 columns exist.
@@ -356,7 +662,7 @@ class WorkspaceMediator:
         """
         cols = list(self.model._data_frame.columns)
         if len(cols) < 3:
-            QMessageBox.warning(
+            self._show_warning(
                 parent_window,
                 "⚠️ Insufficient Columns",
                 "Two-Way ANOVA requires at least 3 columns (Factor A, Factor B, Value)."
@@ -369,7 +675,7 @@ class WorkspaceMediator:
         )
 
         if not analysis["success"]:
-            QMessageBox.critical(parent_window, "❌ Math Exception", analysis["error"])
+            self._show_critical(parent_window, "❌ Math Exception", analysis["error"])
             return
 
         r = analysis["results"]
@@ -381,13 +687,9 @@ class WorkspaceMediator:
             f"• Factor B ({col_b}): F = {fb['f_statistic']:.4f}, p = {fb['p_value']:.5e}\n"
             f"• Interaction ({col_a} x {col_b}): F = {fab['f_statistic']:.4f}, p = {fab['p_value']:.5e}\n"
         )
-        QMessageBox.information(parent_window, "🔬 Two-Way ANOVA Results", summary_msg)
-
-        if self.center_stack:
-            self.center_stack.setCurrentIndex(1)
-        if self.results_browser:
-            report_html = ScientificReportGenerator.generate_master_report(self.model)
-            self.results_browser.setHtml(report_html)
+        self._show_info(parent_window, "🔬 Two-Way ANOVA Results", summary_msg)
+        self._update_results_ledger_and_tree()
+        self.canvas.render_grouped_bar_chart(self.model)
 
     def execute_kaplan_meier_survival(self, parent_window) -> None:
         """Executes Kaplan-Meier Survival Analysis on the active spreadsheet model.
@@ -411,7 +713,7 @@ class WorkspaceMediator:
             event_col = cols[1]
 
         if not time_col or not event_col:
-            QMessageBox.warning(
+            self._show_warning(
                 parent_window,
                 "⚠️ Insufficient Columns",
                 "Kaplan-Meier survival analysis requires Time and Event columns."
@@ -424,12 +726,12 @@ class WorkspaceMediator:
         analysis = KaplanMeierEngine.calculate_kaplan_meier(time_data, event_data)
 
         if not analysis["success"]:
-            QMessageBox.critical(parent_window, "❌ Math Exception", analysis["error"])
+            self._show_critical(parent_window, "❌ Math Exception", analysis["error"])
             return
 
         summary = analysis["summary"]
         median_val = summary.get("median_survival", np.nan)
-        median_str = f"{median_val:.2f}" if median_val is not None and not np.isnan(median_val) else "Undefined"
+        median_str = f"{median_val:.2f}" if (median_val is not None and not np.isnan(median_val)) else "Undefined"
         summary_msg = (
             f"⏳ Kaplan-Meier Survival Analysis Summary\n"
             f"-----------------------------------------\n"
@@ -438,13 +740,9 @@ class WorkspaceMediator:
             f"• Total Censored: {summary['total_censored']}\n"
             f"• Estimated Median Survival Time: {median_str}\n"
         )
-        QMessageBox.information(parent_window, "🔬 Kaplan-Meier Results", summary_msg)
-
-        if self.center_stack:
-            self.center_stack.setCurrentIndex(1)
-        if self.results_browser:
-            report_html = ScientificReportGenerator.generate_master_report(self.model)
-            self.results_browser.setHtml(report_html)
+        self._show_info(parent_window, "🔬 Kaplan-Meier Results", summary_msg)
+        self._update_results_ledger_and_tree()
+        self.canvas.render_kaplan_meier_survival(analysis["results"])
 
     def save_workspace_to_disk(self, parent_window, filepath: str = None, silent: bool = False) -> None:
         """Exports workspace models to CSV or compressed .schism archive format.
@@ -493,10 +791,10 @@ class WorkspaceMediator:
                 parent_window.update_recent_files_menu()
 
             if not silent:
-                QMessageBox.information(parent_window, "💾 Success", f"Workspace dataset successfully saved to:\n{filepath}")
+                self._show_info(parent_window, "💾 Success", f"Workspace dataset successfully saved to:\n{filepath}")
         else:
             if not silent:
-                QMessageBox.critical(parent_window, "❌ Error", "Failed to write data safely to local disk path.")
+                self._show_critical(parent_window, "❌ Error", "Failed to write data safely to local disk path.")
 
     def load_workspace_from_disk(self, parent_window) -> None:
         """Triggers a native file open dialog to load CSV spreadsheets or Schism archives.
@@ -532,7 +830,7 @@ class WorkspaceMediator:
 
         models = ScientificFileHandler.import_from_schism(filepath)
         if not models:
-            QMessageBox.warning(parent_window, "⚠️ Load Error", f"Failed to load .schism archive:\n{filepath}")
+            self._show_warning(parent_window, "⚠️ Load Error", f"Failed to load .schism archive:\n{filepath}")
             return
 
         if hasattr(parent_window, "current_filepath"):
@@ -545,7 +843,7 @@ class WorkspaceMediator:
         else:
             self.display_sheet_model(models[0])
 
-        QMessageBox.information(parent_window, "📂 Schism Archive Loaded", f"Successfully loaded {len(models)} sheet(s) from archive.")
+        self._show_info(parent_window, "📂 Schism Archive Loaded", f"Successfully loaded {len(models)} sheet(s) from archive.")
 
     def open_recent_filepath(self, parent_window, filepath: str) -> None:
         """Opens a file path from the recent files menu, routing by extension (.schism, .prism, .csv).
@@ -555,7 +853,7 @@ class WorkspaceMediator:
             filepath (str): Absolute file path to open.
         """
         if not os.path.exists(filepath):
-            QMessageBox.warning(
+            self._show_warning(
                 parent_window,
                 "⚠️ File Not Found",
                 f"The requested file path could not be found on disk:\n{filepath}"
@@ -578,7 +876,7 @@ class WorkspaceMediator:
                     else:
                         self.display_sheet_model(models[0])
             except Exception as exc:
-                QMessageBox.critical(parent_window, "❌ Error", f"Failed to open Prism archive:\n{str(exc)}")
+                self._show_critical(parent_window, "❌ Error", f"Failed to open Prism archive:\n{str(exc)}")
         else:
             loaded_model = ScientificFileHandler.import_from_csv(filepath, table_type="XY")
             if hasattr(parent_window, "current_filepath"):
@@ -610,14 +908,14 @@ class WorkspaceMediator:
         try:
             models = PrismParser.parse(filepath)
         except PrismParseError as exc:
-            QMessageBox.warning(
+            self._show_warning(
                 parent_window,
                 "⚠️ Parse Error",
                 f"Failed to parse Prism archive:\n{str(exc)}"
             )
             return
         except Exception as exc:
-            QMessageBox.critical(
+            self._show_critical(
                 parent_window,
                 "❌ Error",
                 f"Unexpected error reading file:\n{str(exc)}"
@@ -625,7 +923,7 @@ class WorkspaceMediator:
             return
 
         if not models:
-            QMessageBox.warning(
+            self._show_warning(
                 parent_window,
                 "⚠️ Empty Archive",
                 "The selected Prism archive does not contain any valid data sheets."
@@ -656,7 +954,7 @@ class WorkspaceMediator:
                 target_model = models[selected_idx]
             self.display_sheet_model(target_model)
 
-        QMessageBox.information(
+        self._show_info(
             parent_window,
             "📂 Prism Archive Loaded",
             f"Successfully loaded {len(models)} sheet(s) from Prism archive."

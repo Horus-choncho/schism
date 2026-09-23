@@ -74,10 +74,8 @@ QMenu::item:selected {
 QToolBar {
     background-color: #252525;
     border-bottom: 1px solid #3d3d3d;
-    spacing: 6px;
-    padding: 3px;
-    padding-left: 6px;
-    padding-right: 6px;
+    spacing: 8px;
+    padding: 2px 6px;
 }
 
 QToolButton {
@@ -85,9 +83,8 @@ QToolButton {
     color: #ffffff;
     border: 1px solid transparent;
     border-radius: 4px;
-    padding: 4px 8px;
-    padding-left: 6px;
-    padding-right: 6px;
+    padding: 4px 10px;
+    font-size: 13px;
 }
 
 QToolButton:hover {
@@ -107,12 +104,23 @@ QSplitter::handle:hover {
     background-color: #0284c7;
 }
 
-QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {
+QLineEdit, QSpinBox, QDoubleSpinBox {
     background-color: #1e1e1e;
     color: #ffffff;
     border: 1px solid #444444;
     border-radius: 4px;
     padding: 4px 8px;
+    selection-background-color: #0284c7;
+    selection-color: #ffffff;
+}
+
+QComboBox {
+    background-color: #1e1e1e;
+    color: #ffffff;
+    border: 1px solid #444444;
+    border-radius: 4px;
+    padding: 2px 8px;
+    min-height: 24px;
     selection-background-color: #0284c7;
     selection-color: #ffffff;
 }
@@ -156,9 +164,9 @@ QTreeWidget, QListWidget {
 }
 
 QTreeWidget::item, QListWidget::item {
-    height: 28px;
-    padding-left: 8px;
-    padding-right: 8px;
+    height: 30px;
+    padding: 4px 8px;
+    margin: 1px 0px;
     color: #ffffff;
 }
 
@@ -192,7 +200,7 @@ class VibePadSchismMainWindow(QMainWindow):
         """Assembles the three-pane interface layout shell using QSplitter containers."""
         # 1. Initialize the master menu bar layout across the top layout boundary
         menubar = self.menuBar()
-        file_menu = menubar.addMenu("📁 File")
+        file_menu = menubar.addMenu("📁  File")
 
         open_action = QAction("Open Workspace (.csv)...", self)
         open_action.setShortcut(QKeySequence("Ctrl+O"))

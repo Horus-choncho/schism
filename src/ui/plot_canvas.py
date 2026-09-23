@@ -160,7 +160,7 @@ class TextEditDialog(QDialog):
         # Bottom Action Strip
         btn_layout = QHBoxLayout()
 
-        self.delete_btn = QPushButton("🗑️ Delete Annotation")
+        self.delete_btn = QPushButton("🗑️  Delete Annotation")
         self.delete_btn.setStyleSheet("""
             QPushButton {
                 background-color: #ef4444;
@@ -405,10 +405,11 @@ class ScientificPlotCanvas(QWidget):
 
         # --- Primary Action Toolbar Strip ---
         self.toolbar = QToolBar("Plot Tools", self)
-        self.toolbar.setFixedHeight(32)
+        self.toolbar.setMinimumHeight(36)
+        self.toolbar.setContentsMargins(4, 2, 4, 2)
 
         # Add Text Annotation Action
-        add_text_action = QAction("➕ Add Text (T)", self)
+        add_text_action = QAction("➕  Add Text (T)", self)
         add_text_action.setToolTip("Add draggable text annotation to graph canvas")
         add_text_action.triggered.connect(self.add_text_annotation)
         self.toolbar.addAction(add_text_action)
@@ -416,7 +417,7 @@ class ScientificPlotCanvas(QWidget):
         self.toolbar.addSeparator()
 
         # Export Plot Action
-        export_action = QAction("📤 Export Plot...", self)
+        export_action = QAction("📤  Export Plot...", self)
         export_action.setToolTip("Save plot as PNG image or PDF document")
         export_action.triggered.connect(self.export_plot)
         self.toolbar.addAction(export_action)
@@ -425,15 +426,18 @@ class ScientificPlotCanvas(QWidget):
 
         # --- Secondary Plot Configuration Control Toolbar ---
         self.controls_toolbar = QToolBar("Plot Configuration", self)
-        self.controls_toolbar.setFixedHeight(34)
+        self.controls_toolbar.setMinimumHeight(38)
+        self.controls_toolbar.setContentsMargins(4, 2, 4, 2)
         self.controls_toolbar.setStyleSheet("background-color: #252525; border-bottom: 1px solid #3d3d3d;")
 
-        type_label = QLabel(" 📈 Plot Type: ", self)
+        type_label = QLabel(" 📈  Plot Type: ", self)
         type_label.setStyleSheet("color: #ffffff; font-weight: bold;")
         self.controls_toolbar.addWidget(type_label)
 
         self.plot_type_combo = QComboBox(self)
         self.plot_type_combo.addItems(["XY Line Scatter", "Bar Chart", "Box Plot"])
+        self.plot_type_combo.setMinimumWidth(140)
+        self.plot_type_combo.setMinimumHeight(26)
         self.controls_toolbar.addWidget(self.plot_type_combo)
 
         self.controls_toolbar.addSeparator()
@@ -452,6 +456,7 @@ class ScientificPlotCanvas(QWidget):
         self.sd_multiplier_spin = QSpinBox(self)
         self.sd_multiplier_spin.setRange(1, 5)
         self.sd_multiplier_spin.setValue(1)
+        self.sd_multiplier_spin.setMinimumHeight(26)
         self.controls_toolbar.addWidget(self.sd_multiplier_spin)
 
         self.plot_type_combo.currentTextChanged.connect(self._on_plot_controls_changed)
@@ -461,7 +466,7 @@ class ScientificPlotCanvas(QWidget):
         layout.addWidget(self.controls_toolbar)
 
         # Create pyqtgraph PlotWidget element with high-contrast white background
-        self.plot_widget = pg.PlotWidget(title="🔬 Experimental Analysis Workspace")
+        self.plot_widget = pg.PlotWidget(title="🔬  Experimental Analysis Workspace")
         self.plot_widget.setBackground('w')  # High-contrast white canvas background
 
         # Enable ViewBox clipping to lock plot curves, bars, and error whiskers within axis boundaries
@@ -469,6 +474,14 @@ class ScientificPlotCanvas(QWidget):
         view_box = self.plot_widget.plotItem.getViewBox()
         view_box.setFlag(QGraphicsItem.GraphicsItemFlag.ItemClipsChildrenToShape, True)
         view_box.setDefaultPadding(0.05)
+
+        # Initialize high-contrast scientific legend on self.plot_widget.plotItem
+        self.legend = self.plot_widget.addLegend(
+            offset=(10, 10),
+            labelTextColor='k',
+            brush=pg.mkBrush(255, 255, 255, 220),
+            pen=pg.mkPen('#3d3d3d', width=1)
+        )
 
         # Configure crisp scientific axis labels and grid styling
         self.plot_widget.setLabel('bottom', 'Independent Variable (X-Axis)', colors='k')
@@ -481,6 +494,18 @@ class ScientificPlotCanvas(QWidget):
         """Clears custom category string tick mappings from axes, resetting to pure continuous linear scale."""
         self.plot_widget.getAxis('bottom').setTicks(None)
         self.plot_widget.getAxis('left').setTicks(None)
+
+    def set_axis_titles(self, x_title: str = None, y_title: str = None) -> None:
+        """Dynamically updates the bottom (X) and left (Y) axis title labels.
+
+        Args:
+            x_title (str, optional): Label string for the X-axis (bottom).
+            y_title (str, optional): Label string for the Y-axis (left).
+        """
+        if x_title is not None:
+            self.plot_widget.setLabel('bottom', str(x_title), colors='k')
+        if y_title is not None:
+            self.plot_widget.setLabel('left', str(y_title), colors='k')
 
     def _on_plot_controls_changed(self) -> None:
         """Slot invoked when user toggles plot type, error bar checkbox, or SD multiplier spinbox."""
@@ -553,23 +578,39 @@ class ScientificPlotCanvas(QWidget):
             y_datasets_dict (dict): Dictionary mapping column titles to 1D Y-data NumPy arrays.
             fit_curve_y (np.ndarray, optional): Fitted regression Y values. Defaults to None.
         """
+        x_data = np.asarray(x_data, dtype=float) if x_data is not None else np.array([], dtype=float)
+        if fit_curve_y is not None:
+            fit_curve_y = np.asarray(fit_curve_y, dtype=float)
+
         self._last_x_data = x_data
         self._last_fit_curve_y = fit_curve_y
 
         # Reset bottom axis ticks to continuous linear numeric scale
         self.reset_axis_ticks()
 
+        # Clear active legend entries
+        if hasattr(self, "legend") and self.legend is not None:
+            self.legend.clear()
+
         # Handle 1D array fallback
         if isinstance(y_datasets_dict, np.ndarray):
             y_datasets_dict = {"Y1": y_datasets_dict}
+        elif isinstance(y_datasets_dict, list):
+            y_datasets_dict = {"Y1": np.asarray(y_datasets_dict, dtype=float)}
         elif not isinstance(y_datasets_dict, dict):
             y_datasets_dict = {}
 
+        # Ensure all dataset vectors in dictionary are numpy float arrays
+        clean_y_datasets = {}
+        for k, v in y_datasets_dict.items():
+            clean_y_datasets[k] = np.asarray(v, dtype=float)
+        y_datasets_dict = clean_y_datasets
+
         self._last_y_datasets_dict = y_datasets_dict
 
-        # Clear obsolete plot items while explicitly preserving SchismTextItem / TextItem annotations
+        # Clear obsolete plot items while explicitly preserving SchismTextItem / TextItem / LegendItem annotations
         for item in list(self.plot_widget.items()):
-            if not isinstance(item, (pg.TextItem, SchismTextItem, pg.AxisItem, pg.ViewBox)):
+            if not isinstance(item, (pg.TextItem, SchismTextItem, pg.AxisItem, pg.ViewBox, pg.LegendItem)):
                 try:
                     self.plot_widget.removeItem(item)
                 except Exception:
@@ -617,7 +658,8 @@ class ScientificPlotCanvas(QWidget):
                 symbolSize=symbol_size,
                 symbolBrush=symbol_brush,
                 symbolPen=pg.mkPen('k', width=1),
-                clickable=True
+                clickable=True,
+                name=str(col_name)
             )
             self.plot_widget.addItem(plot_item)
 
@@ -645,9 +687,13 @@ class ScientificPlotCanvas(QWidget):
 
         self.reset_axis_ticks()
 
-        # Clear existing plot graphics items (retaining text annotations)
+        # Clear active legend entries
+        if hasattr(self, "legend") and self.legend is not None:
+            self.legend.clear()
+
+        # Clear existing plot graphics items (retaining text annotations and legend)
         for item in list(self.plot_widget.items()):
-            if not isinstance(item, (pg.TextItem, SchismTextItem, pg.AxisItem, pg.ViewBox)):
+            if not isinstance(item, (pg.TextItem, SchismTextItem, pg.AxisItem, pg.ViewBox, pg.LegendItem)):
                 try:
                     self.plot_widget.removeItem(item)
                 except Exception:
@@ -663,86 +709,128 @@ class ScientificPlotCanvas(QWidget):
                 x_col = c
                 break
 
+        default_colors = ["#0284c7", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6", "#ec4899", "#14b8a6"]
+
         if x_col:
             categories = model.get_column_data(x_col)
             y_cols = [c for c in cols if c != x_col]
+            if not y_cols:
+                return
+
+            num_categories = len(categories)
+            num_series = len(y_cols)
+            if num_categories == 0 or num_series == 0:
+                return
+
+            group_width = 0.8
+            bar_width = group_width / max(1, num_series)
+            category_positions = np.arange(num_categories, dtype=float) * 1.5
+
+            ticks = [(category_positions[cat_idx], str(cat_val)) for cat_idx, cat_val in enumerate(categories)]
+            ax = self.plot_widget.getAxis('bottom')
+            ax.setTicks([ticks])
+
+            sd_mult = self.sd_multiplier_spin.value()
+            show_err = self.show_error_bars_cb.isChecked()
+
+            for series_idx, col_name in enumerate(y_cols):
+                data_vec = model.get_column_data(col_name)
+                if data_vec.size == 0:
+                    continue
+
+                if data_vec.size == num_categories:
+                    means = data_vec
+                    std_val = float(np.std(data_vec, ddof=1)) if data_vec.size > 1 else 0.0
+                    errors = np.full(num_categories, std_val * sd_mult)
+                else:
+                    mean_val = float(np.mean(data_vec))
+                    std_val = float(np.std(data_vec, ddof=1)) if data_vec.size > 1 else 0.0
+                    err_val = float(std_val * sd_mult)
+                    means = np.full(num_categories, mean_val)
+                    errors = np.full(num_categories, err_val)
+
+                offset = - (group_width / 2.0) + (series_idx + 0.5) * bar_width
+                x_pos = category_positions + offset
+
+                color = default_colors[series_idx % len(default_colors)]
+                brush = pg.mkBrush(color)
+                pen = pg.mkPen('#000000', width=1.5)
+
+                bg = pg.BarGraphItem(
+                    x=x_pos,
+                    height=means,
+                    width=bar_width * 0.9,
+                    brush=brush,
+                    pen=pen
+                )
+                self.plot_widget.addItem(bg)
+                if hasattr(self, "legend") and self.legend is not None:
+                    self.legend.addItem(bg, str(col_name))
+
+                if show_err and np.any(errors > 0):
+                    err = pg.ErrorBarItem(
+                        x=x_pos,
+                        y=means,
+                        top=errors,
+                        bottom=errors,
+                        beam=bar_width * 0.3,
+                        pen=pg.mkPen('#000000', width=1.5)
+                    )
+                    self.plot_widget.addItem(err)
+
+            self.set_axis_titles(x_title=str(x_col), y_title=f'Result (Mean ± {sd_mult}x SD)')
         else:
-            categories = np.array([f"Group {i+1}" for i in range(len(model._data_frame))])
             y_cols = cols
+            num_series = len(y_cols)
+            if num_series == 0:
+                return
 
-        if not y_cols:
-            return
+            category_positions = np.arange(num_series, dtype=float) * 1.5
+            ticks = [(category_positions[idx], str(col_name)) for idx, col_name in enumerate(y_cols)]
+            ax = self.plot_widget.getAxis('bottom')
+            ax.setTicks([ticks])
 
-        num_categories = len(categories)
-        num_series = len(y_cols)
-        if num_categories == 0 or num_series == 0:
-            return
+            sd_mult = self.sd_multiplier_spin.value()
+            show_err = self.show_error_bars_cb.isChecked()
+            bar_width = 0.6
 
-        default_colors = ["#0284c7", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6", "#ec4899", "#14b8a6"]
+            for idx, col_name in enumerate(y_cols):
+                data_vec = model.get_column_data(col_name)
+                if data_vec.size == 0:
+                    continue
 
-        # Calculate category spacing coordinates and bar width offsets: W_bar = W_group / N_series
-        group_width = 0.8
-        bar_width = group_width / max(1, num_series)
-        category_positions = np.arange(num_categories, dtype=float) * 1.5
-
-        ticks = []
-        for cat_idx, cat_val in enumerate(categories):
-            ticks.append((category_positions[cat_idx], str(cat_val)))
-
-        ax = self.plot_widget.getAxis('bottom')
-        ax.setTicks([ticks])
-
-        sd_mult = self.sd_multiplier_spin.value()
-        show_err = self.show_error_bars_cb.isChecked()
-
-        for series_idx, col_name in enumerate(y_cols):
-            data_vec = model.get_column_data(col_name)
-            if data_vec.size == 0:
-                continue
-
-            if data_vec.size == num_categories:
-                means = data_vec
-                std_val = float(np.std(data_vec, ddof=1)) if data_vec.size > 1 else 0.0
-                errors = np.full(num_categories, std_val * sd_mult)
-            else:
                 mean_val = float(np.mean(data_vec))
                 std_val = float(np.std(data_vec, ddof=1)) if data_vec.size > 1 else 0.0
                 err_val = float(std_val * sd_mult)
-                means = np.full(num_categories, mean_val)
-                errors = np.full(num_categories, err_val)
 
-            # Compute horizontal bar coordinate offsets relative to category center
-            offset = - (group_width / 2.0) + (series_idx + 0.5) * bar_width
-            x_pos = category_positions + offset
+                x_pos = np.array([category_positions[idx]])
+                color = default_colors[idx % len(default_colors)]
+                brush = pg.mkBrush(color)
+                pen = pg.mkPen('#000000', width=1.5)
 
-            color = default_colors[series_idx % len(default_colors)]
-            brush = pg.mkBrush(color)
-            pen = pg.mkPen('#000000', width=1.5)
-
-            # 1. Add BarGraphItem for column series
-            bg = pg.BarGraphItem(
-                x=x_pos,
-                height=means,
-                width=bar_width * 0.9,
-                brush=brush,
-                pen=pen
-            )
-            self.plot_widget.addItem(bg)
-
-            # 2. Add ErrorBarItem whiskers in high-contrast solid black (#000000)
-            if show_err and np.any(errors > 0):
-                err = pg.ErrorBarItem(
+                bg = pg.BarGraphItem(
                     x=x_pos,
-                    y=means,
-                    top=errors,
-                    bottom=errors,
-                    beam=bar_width * 0.3,
-                    pen=pg.mkPen('#000000', width=1.5)
+                    height=np.array([mean_val]),
+                    width=bar_width,
+                    brush=brush,
+                    pen=pen
                 )
-                self.plot_widget.addItem(err)
+                self.plot_widget.addItem(bg)
+                if hasattr(self, "legend") and self.legend is not None:
+                    self.legend.addItem(bg, str(col_name))
 
-        self.plot_widget.setLabel('left', f'Result (Mean ± {sd_mult}x SD)', colors='k')
-        self.plot_widget.setLabel('bottom', x_col if x_col else 'Categories / Datasets', colors='k')
+                if show_err and err_val > 0:
+                    err = pg.ErrorBarItem(
+                        x=x_pos,
+                        y=np.array([mean_val]),
+                        top=np.array([err_val]),
+                        bottom=np.array([err_val]),
+                        beam=bar_width * 0.3,
+                        pen=pg.mkPen('#000000', width=1.5)
+                    )
+                    self.plot_widget.addItem(err)
+
+            self.set_axis_titles(x_title='Column / Factor Names', y_title=f'Result (Mean ± {sd_mult}x SD)')
 
     def render_box_plot(self, model) -> None:
         """Renders a scientific Box Plot (Median, IQR, Whiskers) using pg.BarGraphItem and pg.ErrorBarItem.
@@ -757,8 +845,12 @@ class ScientificPlotCanvas(QWidget):
 
         self.reset_axis_ticks()
 
+        # Clear active legend entries
+        if hasattr(self, "legend") and self.legend is not None:
+            self.legend.clear()
+
         for item in list(self.plot_widget.items()):
-            if not isinstance(item, (pg.TextItem, SchismTextItem, pg.AxisItem, pg.ViewBox)):
+            if not isinstance(item, (pg.TextItem, SchismTextItem, pg.AxisItem, pg.ViewBox, pg.LegendItem)):
                 try:
                     self.plot_widget.removeItem(item)
                 except Exception:
@@ -810,6 +902,8 @@ class ScientificPlotCanvas(QWidget):
                 pen=pg.mkPen('#000000', width=1.5)
             )
             self.plot_widget.addItem(bg)
+            if hasattr(self, "legend") and self.legend is not None:
+                self.legend.addItem(bg, str(col_name))
 
             # Render solid black line at Median (Q50) location
             med_line = pg.PlotDataItem(
@@ -833,8 +927,83 @@ class ScientificPlotCanvas(QWidget):
                 )
                 self.plot_widget.addItem(err)
 
-        self.plot_widget.setLabel('left', f'Distribution (Median / IQR ± {sd_mult}x SD)', colors='k')
-        self.plot_widget.setLabel('bottom', 'Experimental Variables / Columns', colors='k')
+        x_title_str = str(x_col) if 'x_col' in locals() and x_col else 'Column / Factor Names'
+        self.set_axis_titles(x_title=x_title_str, y_title=f'Distribution (Median / IQR ± {sd_mult}x SD)')
+
+    def render_kaplan_meier_survival(self, km_results: dict) -> None:
+        """Renders a dedicated step-function survival curve plotting Survival Probability S(t) (0.0 to 1.0) over Time.
+
+        Args:
+            km_results (dict): Output payload from KaplanMeierEngine containing 'survival_table'.
+        """
+        self.reset_axis_ticks()
+
+        # Clear active legend entries
+        if hasattr(self, "legend") and self.legend is not None:
+            self.legend.clear()
+
+        for item in list(self.plot_widget.items()):
+            if not isinstance(item, (pg.TextItem, SchismTextItem, pg.AxisItem, pg.ViewBox, pg.LegendItem)):
+                try:
+                    self.plot_widget.removeItem(item)
+                except Exception:
+                    pass
+
+        if not km_results or "survival_table" not in km_results:
+            return
+
+        table_rows = km_results["survival_table"]
+        if not table_rows:
+            return
+
+        step_x = [0.0]
+        step_y = [1.0]
+
+        censored_x = []
+        censored_y = []
+
+        curr_prob = 1.0
+        for row in table_rows:
+            t = float(row["time"])
+            prob = float(row["survival_probability"])
+            events = int(row["events"])
+            censored = int(row["censored"])
+
+            step_x.append(t)
+            step_y.append(curr_prob)
+
+            step_x.append(t)
+            step_y.append(prob)
+            curr_prob = prob
+
+            if censored > 0:
+                for _ in range(censored):
+                    censored_x.append(t)
+                    censored_y.append(prob)
+
+        curve_item = pg.PlotDataItem(
+            x=np.array(step_x),
+            y=np.array(step_y),
+            pen=pg.mkPen('#0284c7', width=2.5)
+        )
+        self.plot_widget.addItem(curve_item)
+        if hasattr(self, "legend") and self.legend is not None:
+            self.legend.addItem(curve_item, "Survival S(t)")
+
+        if censored_x:
+            censored_item = pg.PlotDataItem(
+                x=np.array(censored_x),
+                y=np.array(censored_y),
+                pen=None,
+                symbol='+',
+                symbolSize=10,
+                symbolPen=pg.mkPen('#ef4444', width=2),
+                symbolBrush=pg.mkBrush('#ef4444')
+            )
+            self.plot_widget.addItem(censored_item)
+
+        self.set_axis_titles(x_title='Time', y_title='Survival Probability S(t)')
+        self.plot_widget.setYRange(0.0, 1.05, padding=0)
 
     # -------------------------------------------------------------------------
     # Export Pipeline
